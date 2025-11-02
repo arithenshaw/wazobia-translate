@@ -52,28 +52,6 @@ curl -X POST http://localhost:5000/a2a/agent/wazobiaAgent \
   -d '{"message": "thank you"}'
 ```
 
-### 4. Deploy to Render (20 min)
-
-#### Push to GitHub
-```bash
-git add .
-git commit -m "Initial commit - WazobiaTranslate"
-git push origin main
-```
-
-#### Deploy on Render.com
-1. Go to [render.com](https://render.com) and sign up
-2. Click "New +" → "Web Service"
-3. Connect your GitHub repository
-4. Configure:
-   - **Name**: wazobia-translate
-   - **Build Command**: `pip install -r requirements.txt`
-   - **Start Command**: `gunicorn app:app`
-   - **Instance Type**: Free
-5. Click "Create Web Service"
-
-**That's it!** No environment variables needed. It just works! ✅
-
 ## 🌐 API Endpoints
 
 ### Health Check

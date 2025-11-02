@@ -301,113 +301,33 @@ def translate():
 
 @app.route('/a2a/agent/wazobiaAgent', methods=['POST'])
 def a2a_agent():
-    """
-    Telex.im A2A protocol endpoint.
-    Handles incoming messages from Telex and returns translations.
-    """
+    """Ultra-minimal for Telex compatibility"""
     try:
         data = request.get_json()
-        logger.info(f"Received A2A request: {data}")
+        logger.info(f"Received: {data}")
         
-        # Extract message from different possible formats
         user_message = data.get('message', '') or data.get('text', '') or data.get('input', '')
         
-        if not user_message or user_message.strip() == '':
-            response_text = (
-                "Welcome to WazobiaTranslate!\n\n"
-                "I translate between English, Yoruba, Hausa, and Igbo!\n\n"
-                "Try me with:\n"
-                "- Single words: hello, water, thank you\n"
-                "- Phrases: good morning, how are you\n"
-                "- Full sentences: I love Nigerian food\n\n"
-                "Powered by FREE MyMemory API + curated dictionary"
-            )
-            
-            return jsonify({
-                "response": response_text,
-                "metadata": {
-                    "agent": "WazobiaTranslate",
-                    "version": "2.0",
-                    "timestamp": datetime.utcnow().isoformat()
-                }
-            }), 200
+        if not user_message:
+            return jsonify({"response": "Hello! Try: hello, water, thank you"}), 200
         
-        logger.info(f"Processing message: {user_message}")
-        
-        # Process the translation
         result = translate_text(user_message)
         
-        logger.info(f"Translation result: {result}")
-        
-        # Format response for Telex (simpler formatting)
+        # MINIMAL response
         if result.get('found'):
-            translations = result['translations']
-            detected = result['detected_language'].capitalize()
-            source = result.get('source', 'api')
-            
-            # Simple, clean response without heavy markdown
-            response_text = f"Translation for '{user_message}'\n\n"
-            response_text += f"Detected: {detected}\n"
-            
-            if source == 'dictionary':
-                response_text += "Source: Dictionary (instant)\n\n"
-            else:
-                response_text += "Source: MyMemory AI\n\n"
-            
-            response_text += "Translations:\n"
-            
-            for lang, translation in translations.items():
-                if translation != "Translation unavailable":
-                    response_text += f"- {lang.capitalize()}: {translation}\n"
-            
-            # Add helpful tip
-            if source == 'dictionary':
-                response_text += "\nTry a full sentence for AI translation!"
-            else:
-                response_text += "\nTranslated with AI"
+            response_text = ""
+            for lang, trans in result['translations'].items():
+                if trans != "Translation unavailable":
+                    response_text += f"{lang}: {trans}\n"
+            response_text = response_text.strip()
         else:
-            response_text = f"Sorry, I couldn't translate '{user_message}'\n\n"
-            
-            if result.get('message'):
-                response_text += f"{result['message']}\n\n"
-            
-            response_text += "Popular words:\n"
-            response_text += "- Greetings: hello, good morning\n"
-            response_text += "- Courtesy: thank you, please\n"
-            response_text += "- Basic: water, food, house\n\n"
-            response_text += "Or try any sentence!"
+            response_text = "Not found. Try: hello, water, thank you"
         
-        logger.info(f"Sending response: {response_text[:100]}...")
-        
-        return jsonify({
-            "response": response_text,
-            "metadata": {
-                "agent": "WazobiaTranslate",
-                "version": "2.0",
-                "timestamp": datetime.utcnow().isoformat(),
-                "found": result.get('found', False),
-                "source": result.get('source', 'unknown')
-            }
-        }), 200
+        return jsonify({"response": response_text}), 200
     
     except Exception as e:
-        logger.error(f"A2A Agent error: {str(e)}", exc_info=True)
-        
-        error_response = (
-            "An error occurred while translating.\n\n"
-            "Please try again or try a different word.\n\n"
-            "Tip: Common words work best!"
-        )
-        
-        return jsonify({
-            "response": error_response,
-            "metadata": {
-                "agent": "WazobiaTranslate",
-                "error": True,
-                "error_message": str(e),
-                "timestamp": datetime.utcnow().isoformat()
-            }
-        }), 200  # Return 200 even on error so Telex can display the message
+        logger.error(f"Error: {e}")
+        return jsonify({"response": "Error. Try again."}), 200
 
 @app.route('/dictionary')
 def get_dictionary():

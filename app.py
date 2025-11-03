@@ -299,35 +299,120 @@ def translate():
         logger.error(f"Translation error: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
-@app.route('/a2a/agent/wazobiaAgent', methods=['POST'])
+@app.route('/a2a/agent/wazobiaAgent', methods=['POST', 'GET', 'OPTIONS'])
 def a2a_agent():
-    """Ultra-minimal for Telex compatibility"""
+    """
+    DEBUG VERSION - Logs everything Telex sends
+    """
+    logger.info("="*80)
+    logger.info("🔍 NEW REQUEST RECEIVED")
+    logger.info("="*80)
+    
+    # Log request method
+    logger.info(f"Method: {request.method}")
+    
+    # Log all headers
+    logger.info("\n📨 HEADERS:")
+    for key, value in request.headers:
+        logger.info(f"  {key}: {value}")
+    
+    # Log request body
+    logger.info("\n📦 BODY:")
+    try:
+        body = request.get_json()
+        logger.info(f"  {body}")
+    except Exception as e:
+        logger.info(f"  Could not parse JSON: {e}")
+        logger.info(f"  Raw data: {request.get_data()}")
+    
+    # Log query params
+    logger.info("\n🔗 QUERY PARAMS:")
+    logger.info(f"  {dict(request.args)}")
+    
+    logger.info("="*80)
+    
+    # Handle OPTIONS (CORS preflight)
+    if request.method == 'OPTIONS':
+        response = jsonify({"status": "ok"})
+        response.headers['Access-Control-Allow-Origin'] = '*'
+        response.headers['Access-Control-Allow-Methods'] = 'POST, GET, OPTIONS'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+        return response, 200
+    
+    # Handle GET (should return 405 but let's see if Telex uses GET)
+    if request.method == 'GET':
+        logger.info("⚠️  WARNING: Received GET request (should be POST)")
+        return jsonify({
+            "response": "Agent is alive! Use POST to translate.",
+            "error": "GET method not supported for translation"
+        }), 200
+    
+    # Handle POST (normal operation)
     try:
         data = request.get_json()
-        logger.info(f"Received: {data}")
         
-        user_message = data.get('message', '') or data.get('text', '') or data.get('input', '')
+        if not data:
+            logger.warning("⚠️  No JSON data received")
+            return jsonify({"response": "No data received"}), 200
+        
+        # Extract message from various possible fields
+        user_message = (
+            data.get('message') or 
+            data.get('text') or 
+            data.get('input') or 
+            data.get('query') or
+            data.get('content') or
+            ''
+        )
+        
+        logger.info(f"📝 Extracted message: '{user_message}'")
         
         if not user_message:
-            return jsonify({"response": "Hello! Try: hello, water, thank you"}), 200
-        
-        result = translate_text(user_message)
-        
-        # MINIMAL response
-        if result.get('found'):
-            response_text = ""
-            for lang, trans in result['translations'].items():
-                if trans != "Translation unavailable":
-                    response_text += f"{lang}: {trans}\n"
-            response_text = response_text.strip()
+            logger.info("ℹ️  Empty message, sending welcome")
+            response_text = "WazobiaTranslate Bot. Try: hello"
         else:
-            response_text = "Not found. Try: hello, water, thank you"
+            logger.info(f"🔄 Processing translation for: '{user_message}'")
+            result = translate_text(user_message)
+            
+            if result.get('found'):
+                response_text = ""
+                for lang, trans in result['translations'].items():
+                    if trans != "Translation unavailable":
+                        response_text += f"{lang}: {trans}\n"
+                response_text = response_text.strip()
+            else:
+                response_text = "Not found. Try: hello, water, thank you"
         
-        return jsonify({"response": response_text}), 200
-    
+        logger.info(f"✅ Sending response: {response_text[:100]}...")
+        
+        # Try multiple response formats
+        response_data = {
+            "response": response_text,
+            "text": response_text,
+            "message": response_text,
+            "content": response_text
+        }
+        
+        logger.info(f"📤 Response data: {response_data}")
+        
+        response = jsonify(response_data)
+        response.headers['Access-Control-Allow-Origin'] = '*'
+        response.headers['Content-Type'] = 'application/json'
+        
+        logger.info("✅ Response sent successfully")
+        logger.info("="*80)
+        
+        return response, 200
+        
     except Exception as e:
-        logger.error(f"Error: {e}")
-        return jsonify({"response": "Error. Try again."}), 200
+        logger.error(f"❌ ERROR: {str(e)}", exc_info=True)
+        logger.info("="*80)
+        
+        return jsonify({
+            "response": f"Error: {str(e)}",
+            "text": "Error occurred",
+            "message": "Error occurred"
+        }), 200
 
 @app.route('/dictionary')
 def get_dictionary():

@@ -302,102 +302,157 @@ def translate():
 @app.route('/a2a/agent/wazobiaAgent', methods=['POST'])
 def a2a_agent():
     """
-    JSON-RPC 2.0 compatible endpoint for Telex.im
+    JSON-RPC 2.0 with webhook callback support for Telex.im
     """
     try:
         data = request.get_json()
         logger.info(f"Received request: {data}")
         
+        # Extract webhook config if present
+        webhook_url = None
+        webhook_token = None
+        
+        if 'params' in data and 'configuration' in data['params']:
+            config = data['params']['configuration']
+            if 'pushNotificationConfig' in config:
+                webhook_url = config['pushNotificationConfig'].get('url')
+                webhook_token = config['pushNotificationConfig'].get('token')
+        
+        logger.info(f"Webhook URL: {webhook_url}")
+        
         # Extract message from JSON-RPC format
         user_message = ""
         
-        # Check if it's JSON-RPC format
         if 'params' in data and 'message' in data['params']:
             message_data = data['params']['message']
             
-            # Extract text from parts array
             if 'parts' in message_data:
                 for part in message_data['parts']:
                     if isinstance(part, dict) and part.get('kind') == 'text':
-                        text = part.get('text', '')
-                        if text and not text.startswith('Translating'):
-                            # Skip the "Translating..." messages from previous attempts
-                            user_message = text.strip()
+                        text = part.get('text', '').strip()
+                        if text and not text.startswith('Translating') and not text.startswith('<p>'):
+                            # Extract clean message
+                            words = text.split()
+                            if len(words) > 10:
+                                # Long concatenated message - extract the actual query
+                                if 'translate' in text.lower():
+                                    parts = text.lower().split('translate')
+                                    if len(parts) > 1:
+                                        user_message = parts[-1].strip()
+                                else:
+                                    user_message = ' '.join(words[-5:])
+                            else:
+                                user_message = text
                             break
         
-        # Fallback to simple format (for direct API calls)
         if not user_message:
             user_message = data.get('message', '') or data.get('text', '')
         
-        logger.info(f"Extracted message: '{user_message}'")
+        user_message = user_message.strip().replace('translate ', '').replace('please ', '')
         
-        # Empty or no message
-        if not user_message:
-            response_text = "WazobiaTranslate Bot\n\nTry: hello, water, thank you"
+        logger.info(f"Clean message: '{user_message}'")
+        
+        # Process translation
+        if not user_message or len(user_message) < 2:
+            response_text = "Hello! Try: hello, water, good morning"
         else:
-            # Process translation
             result = translate_text(user_message)
             
             if result.get('found'):
-                # Format translations simply
                 translations = result['translations']
                 response_lines = []
                 
                 for lang, trans in translations.items():
                     if trans != "Translation unavailable":
-                        response_lines.append(f"{lang}: {trans}")
+                        response_lines.append(f"{lang.capitalize()}: {trans}")
                 
                 response_text = "\n".join(response_lines)
+                
+                if result.get('source') == 'dictionary':
+                    response_text += "\n(instant)"
             else:
-                response_text = "Not found. Try: hello, water, thank you, good morning"
+                response_text = f"'{user_message}' not found\n\nTry: hello, water, good morning"
         
-        logger.info(f"Sending response: {response_text}")
+        logger.info(f"Response: {response_text}")
         
-        # Return in JSON-RPC format if request was JSON-RPC
+        # Create response
+        response_message = {
+            "kind": "message",
+            "role": "assistant",
+            "parts": [
+                {
+                    "kind": "text",
+                    "text": response_text
+                }
+            ]
+        }
+        
+        # If webhook URL provided, send callback
+        if webhook_url and webhook_token:
+            try:
+                logger.info(f"Sending webhook callback to: {webhook_url}")
+                
+                webhook_data = {
+                    "jsonrpc": "2.0",
+                    "method": "message/receive",
+                    "params": {
+                        "message": response_message
+                    }
+                }
+                
+                headers = {
+                    'Content-Type': 'application/json',
+                    'Authorization': f'Bearer {webhook_token}'
+                }
+                
+                webhook_response = requests.post(
+                    webhook_url,
+                    json=webhook_data,
+                    headers=headers,
+                    timeout=5
+                )
+                
+                logger.info(f"Webhook response: {webhook_response.status_code}")
+                
+            except Exception as webhook_error:
+                logger.error(f"Webhook error: {str(webhook_error)}")
+        
+        # Return JSON-RPC response
         if 'jsonrpc' in data and 'id' in data:
-            # JSON-RPC 2.0 response format
             response_data = {
                 "jsonrpc": "2.0",
                 "id": data['id'],
                 "result": {
-                    "message": {
-                        "kind": "message",
-                        "role": "assistant",
-                        "parts": [
-                            {
-                                "kind": "text",
-                                "text": response_text
-                            }
-                        ]
-                    }
+                    "message": response_message
                 }
             }
         else:
-            # Simple format for direct API calls
             response_data = {
                 "response": response_text,
-                "text": response_text,
                 "message": response_text
             }
+        
+        logger.info(f"Returning response")
         
         return jsonify(response_data), 200
     
     except Exception as e:
         logger.error(f"Error: {str(e)}", exc_info=True)
         
-        # Return error in JSON-RPC format if applicable
         if 'jsonrpc' in data and 'id' in data:
             return jsonify({
                 "jsonrpc": "2.0",
                 "id": data['id'],
-                "error": {
-                    "code": -32603,
-                    "message": "Internal error",
-                    "data": str(e)
+                "result": {
+                    "message": {
+                        "kind": "message",
+                        "role": "assistant",
+                        "parts": [{"kind": "text", "text": "Error. Try: hello"}]
+                    }
                 }
             }), 200
         else:
-            return jsonify({"response": "Error occurred"}), 200
+            return jsonify({"response": "Error"}), 200
 
 @app.route('/dictionary')
 def get_dictionary():

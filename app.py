@@ -302,80 +302,67 @@ def translate():
 @app.route('/a2a/agent/wazobiaAgent', methods=['POST'])
 def a2a_agent():
     """
-    JSON-RPC 2.0 with webhook callback support for Telex.im
+    Complete debug version with webhook format testing
     """
     try:
         data = request.get_json()
-        logger.info(f"Received request: {data}")
+        logger.info("="*80)
+        logger.info("📨 NEW REQUEST")
         
-        # Extract webhook config if present
+        # Extract webhook config
         webhook_url = None
         webhook_token = None
         
         if 'params' in data and 'configuration' in data['params']:
             config = data['params']['configuration']
             if 'pushNotificationConfig' in config:
-                webhook_url = config['pushNotificationConfig'].get('url')
-                webhook_token = config['pushNotificationConfig'].get('token')
+                push_config = config['pushNotificationConfig']
+                webhook_url = push_config.get('url')
+                webhook_token = push_config.get('token')
+                logger.info(f"🔔 Webhook URL: {webhook_url}")
         
-        logger.info(f"Webhook URL: {webhook_url}")
-        
-        # Extract message from JSON-RPC format
+        # Extract user message (simplified - just take first text part)
         user_message = ""
         
         if 'params' in data and 'message' in data['params']:
             message_data = data['params']['message']
             
-            if 'parts' in message_data:
-                for part in message_data['parts']:
-                    if isinstance(part, dict) and part.get('kind') == 'text':
-                        text = part.get('text', '').strip()
-                        if text and not text.startswith('Translating') and not text.startswith('<p>'):
-                            # Extract clean message
-                            words = text.split()
-                            if len(words) > 10:
-                                # Long concatenated message - extract the actual query
-                                if 'translate' in text.lower():
-                                    parts = text.lower().split('translate')
-                                    if len(parts) > 1:
-                                        user_message = parts[-1].strip()
-                                else:
-                                    user_message = ' '.join(words[-5:])
-                            else:
-                                user_message = text
-                            break
+            if 'parts' in message_data and len(message_data['parts']) > 0:
+                first_part = message_data['parts'][0]
+                
+                if isinstance(first_part, dict) and first_part.get('kind') == 'text':
+                    raw_text = first_part.get('text', '').strip()
+                    
+                    # Simple extraction: just take first 2-3 words
+                    words = raw_text.split()[:3]
+                    user_message = ' '.join(words)
+                    
+                    # Remove common commands
+                    user_message = user_message.replace('translate', '').replace('please', '').strip()
         
-        if not user_message:
-            user_message = data.get('message', '') or data.get('text', '')
-        
-        user_message = user_message.strip().replace('translate ', '').replace('please ', '')
-        
-        logger.info(f"Clean message: '{user_message}'")
+        logger.info(f"✨ Message: '{user_message}'")
         
         # Process translation
         if not user_message or len(user_message) < 2:
-            response_text = "Hello! Try: hello, water, good morning"
+            response_text = "Try: hello"
         else:
             result = translate_text(user_message)
             
             if result.get('found'):
                 translations = result['translations']
-                response_lines = []
+                lines = []
                 
                 for lang, trans in translations.items():
-                    if trans != "Translation unavailable":
-                        response_lines.append(f"{lang.capitalize()}: {trans}")
+                    if trans and trans != "Translation unavailable":
+                        lines.append(f"{lang.capitalize()}: {trans}")
                 
-                response_text = "\n".join(response_lines)
-                
-                if result.get('source') == 'dictionary':
-                    response_text += "\n(instant)"
+                response_text = "\n".join(lines)
             else:
-                response_text = f"'{user_message}' not found\n\nTry: hello, water, good morning"
+                response_text = f"Not found: {user_message}"
         
-        logger.info(f"Response: {response_text}")
+        logger.info(f"📤 Response: {response_text}")
         
-        # Create response
+        # Create response message
         response_message = {
             "kind": "message",
             "role": "assistant",
@@ -387,35 +374,77 @@ def a2a_agent():
             ]
         }
         
-        # If webhook URL provided, send callback
+        # TEST ALL WEBHOOK FORMATS
         if webhook_url and webhook_token:
-            try:
-                logger.info(f"Sending webhook callback to: {webhook_url}")
+            logger.info("="*60)
+            logger.info("🔔 TESTING WEBHOOK FORMATS")
+            logger.info("="*60)
+            
+            headers = {
+                'Content-Type': 'application/json',
+                'Authorization': f'Bearer {webhook_token}'
+            }
+            
+            formats_to_test = [
+                # Format 1: Just message
+                ("Format 1 (message)", {"message": response_message}),
                 
-                webhook_data = {
-                    "jsonrpc": "2.0",
-                    "method": "message/receive",
-                    "params": {
-                        "message": response_message
-                    }
-                }
+                # Format 2: Just text
+                ("Format 2 (text)", {"text": response_text}),
                 
-                headers = {
-                    'Content-Type': 'application/json',
-                    'Authorization': f'Bearer {webhook_token}'
-                }
+                # Format 3: Parts array
+                ("Format 3 (parts)", {
+                    "parts": [{"kind": "text", "text": response_text}]
+                }),
                 
-                webhook_response = requests.post(
-                    webhook_url,
-                    json=webhook_data,
-                    headers=headers,
-                    timeout=5
-                )
+                # Format 4: Content field
+                ("Format 4 (content)", {"content": response_text}),
                 
-                logger.info(f"Webhook response: {webhook_response.status_code}")
+                # Format 5: Response field
+                ("Format 5 (response)", {"response": response_text}),
                 
-            except Exception as webhook_error:
-                logger.error(f"Webhook error: {str(webhook_error)}")
+                # Format 6: Result wrapper with message
+                ("Format 6 (result.message)", {
+                    "result": {"message": response_message}
+                }),
+            ]
+            
+            success = False
+            
+            for format_name, payload in formats_to_test:
+                if success:
+                    break
+                    
+                try:
+                    logger.info(f"\n📤 Testing {format_name}")
+                    logger.info(f"Payload: {str(payload)[:200]}")
+                    
+                    resp = requests.post(
+                        webhook_url,
+                        json=payload,
+                        headers=headers,
+                        timeout=10
+                    )
+                    
+                    logger.info(f"Status: {resp.status_code}")
+                    
+                    if resp.status_code == 200:
+                        logger.info(f"✅ {format_name} SUCCESS!")
+                        logger.info(f"Response: {resp.text[:300]}")
+                        success = True
+                        break
+                    else:
+                        logger.warning(f"❌ {format_name} failed")
+                        logger.warning(f"Response: {resp.text[:300]}")
+                        
+                except Exception as e:
+                    logger.error(f"❌ {format_name} error: {str(e)}")
+            
+            if not success:
+                logger.error("❌ ALL WEBHOOK FORMATS FAILED!")
+                logger.error("Telex might be expecting a different format")
+            
+            logger.info("="*60)
         
         # Return JSON-RPC response
         if 'jsonrpc' in data and 'id' in data:
@@ -428,28 +457,27 @@ def a2a_agent():
             }
         else:
             response_data = {
-                "response": response_text,
-                "message": response_text
+                "response": response_text
             }
         
-        logger.info(f"Returning response")
+        logger.info("="*80)
         
         return jsonify(response_data), 200
     
     except Exception as e:
-        logger.error(f"Error: {str(e)}", exc_info=True)
+        logger.error(f"💥 ERROR: {str(e)}", exc_info=True)
+        
+        error_message = {
+            "kind": "message",
+            "role": "assistant",
+            "parts": [{"kind": "text", "text": "Error"}]
+        }
         
         if 'jsonrpc' in data and 'id' in data:
             return jsonify({
                 "jsonrpc": "2.0",
                 "id": data['id'],
-                "result": {
-                    "message": {
-                        "kind": "message",
-                        "role": "assistant",
-                        "parts": [{"kind": "text", "text": "Error. Try: hello"}]
-                    }
-                }
+                "result": {"message": error_message}
             }), 200
         else:
             return jsonify({"response": "Error"}), 200

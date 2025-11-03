@@ -172,7 +172,7 @@ def translate_text(text, source_lang=None):
 def a2a_agent():
     """
     A2A Protocol compliant endpoint with MyMemory translation
-    Following FastAPI guide structure
+    Following A2A specification from documentation
     """
     try:
         data = request.get_json()
@@ -278,7 +278,7 @@ def a2a_agent():
         
         logger.info(f"📤 Response ({source_info}): {response_text[:100]}")
         
-        # Build A2A compliant response (per FastAPI guide)
+        # Build A2A compliant response (per documentation)
         
         # Create response message
         response_message = {
@@ -301,7 +301,7 @@ def a2a_agent():
             "message": response_message
         }
         
-        # Create task result (CRITICAL: This is what Telex expects!)
+        # Create task result (this is what A2A spec shows in documentation)
         task_result = {
             "id": task_id,
             "contextId": context_id,
@@ -312,59 +312,42 @@ def a2a_agent():
         }
         
         # If non-blocking, send webhook
+        # Based on the error logs, Telex is rejecting the "result" field structure
+        # The issue is likely that the webhook expects ONLY the task result object, not wrapped in jsonrpc
         if not is_blocking and webhook_url and webhook_token:
-            logger.info("🔔 Sending webhook...")
+            logger.info("🔔 Sending webhook notification...")
             
             try:
-                # Try different webhook formats
-                formats = [
-                    # Format 1: Just the status/message
-                    {
-                        "jsonrpc": "2.0",
-                        "id": request_id,
-                        "result": task_status  # Just the status object
-                    },
-                    # Format 2: Just the response message
-                    {
-                        "jsonrpc": "2.0", 
-                        "id": request_id,
-                        "result": response_message  # Just the message
-                    },
-                    # Format 3: Full task result (what we tried before)
-                    {
-                        "jsonrpc": "2.0",
-                        "id": request_id,
-                        "result": task_result
-                    }
-                ]
+                # CORRECTED: Send just the task_result directly, NOT wrapped in JSON-RPC format
+                # This is because Telex's webhook endpoint is not a JSON-RPC endpoint
+                # It's a REST endpoint that expects the task result payload directly
                 
                 webhook_headers = {
                     'Content-Type': 'application/json',
                     'Authorization': f'Bearer {webhook_token}'
                 }
                 
-                for idx, payload in enumerate(formats, 1):
-                    logger.info(f"Trying webhook format {idx}...")
-                    
-                    webhook_resp = requests.post(
-                        webhook_url,
-                        json=payload,
-                        headers=webhook_headers,
-                        timeout=10
-                    )
-                    
-                    logger.info(f"Format {idx} status: {webhook_resp.status_code}")
-                    
-                    if webhook_resp.status_code == 200:
-                        logger.info(f"🎉 WEBHOOK FORMAT {idx} SUCCESS!")
-                        break
-                    else:
-                        logger.warning(f"Format {idx} error: {webhook_resp.text[:200]}")
+                logger.info(f"📤 Sending task result to webhook: {webhook_url}")
+                logger.info(f"📦 Payload keys: {list(task_result.keys())}")
+                
+                webhook_resp = requests.post(
+                    webhook_url,
+                    json=task_result,  # Send JUST the task_result, not wrapped
+                    headers=webhook_headers,
+                    timeout=10
+                )
+                
+                logger.info(f"📬 Webhook status: {webhook_resp.status_code}")
+                
+                if webhook_resp.status_code == 200:
+                    logger.info("✅ WEBHOOK SUCCESS!")
+                else:
+                    logger.warning(f"⚠️ Webhook error: {webhook_resp.text[:500]}")
             
             except Exception as e:
-                logger.error(f"Webhook exception: {str(e)}")
+                logger.error(f"❌ Webhook exception: {str(e)}", exc_info=True)
         
-        # Return JSON-RPC response
+        # Return JSON-RPC response (this part stays the same - wrapped in JSON-RPC)
         response = {
             "jsonrpc": "2.0",
             "id": request_id,

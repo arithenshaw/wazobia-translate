@@ -18,7 +18,7 @@
       ],
       "type": "a2a/custom-agent-node",
       "typeVersion": 1,
-      "url": "https://your-deployment-url.com/a2a/agent/wazobiaAgent"
+      "url": "https://wazobia-translate-production.up.railway.app/a2a/agent/wazobiaAgent"
     }
   ],
   "pinData": {},

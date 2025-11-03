@@ -9,14 +9,16 @@
     {
       "id": "wazobia_agent_node",
       "name": "WazobiaTranslate Agent",
-      "parameters": {},
+      "parameters": {
+        "blocking": true
+      },
       "position": [
         600,
         300
       ],
       "type": "a2a/custom-agent-node",
       "typeVersion": 1,
-      "url": "https://wazobia-translate-production.up.railway.app/a2a/agent/wazobiaAgent"
+      "url": "https://your-deployment-url.com/a2a/agent/wazobiaAgent"
     }
   ],
   "pinData": {},

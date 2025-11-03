@@ -299,120 +299,105 @@ def translate():
         logger.error(f"Translation error: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
-@app.route('/a2a/agent/wazobiaAgent', methods=['POST', 'GET', 'OPTIONS'])
+@app.route('/a2a/agent/wazobiaAgent', methods=['POST'])
 def a2a_agent():
     """
-    DEBUG VERSION - Logs everything Telex sends
+    JSON-RPC 2.0 compatible endpoint for Telex.im
     """
-    logger.info("="*80)
-    logger.info("🔍 NEW REQUEST RECEIVED")
-    logger.info("="*80)
-    
-    # Log request method
-    logger.info(f"Method: {request.method}")
-    
-    # Log all headers
-    logger.info("\n📨 HEADERS:")
-    for key, value in request.headers:
-        logger.info(f"  {key}: {value}")
-    
-    # Log request body
-    logger.info("\n📦 BODY:")
-    try:
-        body = request.get_json()
-        logger.info(f"  {body}")
-    except Exception as e:
-        logger.info(f"  Could not parse JSON: {e}")
-        logger.info(f"  Raw data: {request.get_data()}")
-    
-    # Log query params
-    logger.info("\n🔗 QUERY PARAMS:")
-    logger.info(f"  {dict(request.args)}")
-    
-    logger.info("="*80)
-    
-    # Handle OPTIONS (CORS preflight)
-    if request.method == 'OPTIONS':
-        response = jsonify({"status": "ok"})
-        response.headers['Access-Control-Allow-Origin'] = '*'
-        response.headers['Access-Control-Allow-Methods'] = 'POST, GET, OPTIONS'
-        response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
-        return response, 200
-    
-    # Handle GET (should return 405 but let's see if Telex uses GET)
-    if request.method == 'GET':
-        logger.info("⚠️  WARNING: Received GET request (should be POST)")
-        return jsonify({
-            "response": "Agent is alive! Use POST to translate.",
-            "error": "GET method not supported for translation"
-        }), 200
-    
-    # Handle POST (normal operation)
     try:
         data = request.get_json()
+        logger.info(f"Received request: {data}")
         
-        if not data:
-            logger.warning("⚠️  No JSON data received")
-            return jsonify({"response": "No data received"}), 200
+        # Extract message from JSON-RPC format
+        user_message = ""
         
-        # Extract message from various possible fields
-        user_message = (
-            data.get('message') or 
-            data.get('text') or 
-            data.get('input') or 
-            data.get('query') or
-            data.get('content') or
-            ''
-        )
+        # Check if it's JSON-RPC format
+        if 'params' in data and 'message' in data['params']:
+            message_data = data['params']['message']
+            
+            # Extract text from parts array
+            if 'parts' in message_data:
+                for part in message_data['parts']:
+                    if isinstance(part, dict) and part.get('kind') == 'text':
+                        text = part.get('text', '')
+                        if text and not text.startswith('Translating'):
+                            # Skip the "Translating..." messages from previous attempts
+                            user_message = text.strip()
+                            break
         
-        logger.info(f"📝 Extracted message: '{user_message}'")
-        
+        # Fallback to simple format (for direct API calls)
         if not user_message:
-            logger.info("ℹ️  Empty message, sending welcome")
-            response_text = "WazobiaTranslate Bot. Try: hello"
+            user_message = data.get('message', '') or data.get('text', '')
+        
+        logger.info(f"Extracted message: '{user_message}'")
+        
+        # Empty or no message
+        if not user_message:
+            response_text = "WazobiaTranslate Bot\n\nTry: hello, water, thank you"
         else:
-            logger.info(f"🔄 Processing translation for: '{user_message}'")
+            # Process translation
             result = translate_text(user_message)
             
             if result.get('found'):
-                response_text = ""
-                for lang, trans in result['translations'].items():
+                # Format translations simply
+                translations = result['translations']
+                response_lines = []
+                
+                for lang, trans in translations.items():
                     if trans != "Translation unavailable":
-                        response_text += f"{lang}: {trans}\n"
-                response_text = response_text.strip()
+                        response_lines.append(f"{lang}: {trans}")
+                
+                response_text = "\n".join(response_lines)
             else:
-                response_text = "Not found. Try: hello, water, thank you"
+                response_text = "Not found. Try: hello, water, thank you, good morning"
         
-        logger.info(f"✅ Sending response: {response_text[:100]}...")
+        logger.info(f"Sending response: {response_text}")
         
-        # Try multiple response formats
-        response_data = {
-            "response": response_text,
-            "text": response_text,
-            "message": response_text,
-            "content": response_text
-        }
+        # Return in JSON-RPC format if request was JSON-RPC
+        if 'jsonrpc' in data and 'id' in data:
+            # JSON-RPC 2.0 response format
+            response_data = {
+                "jsonrpc": "2.0",
+                "id": data['id'],
+                "result": {
+                    "message": {
+                        "kind": "message",
+                        "role": "assistant",
+                        "parts": [
+                            {
+                                "kind": "text",
+                                "text": response_text
+                            }
+                        ]
+                    }
+                }
+            }
+        else:
+            # Simple format for direct API calls
+            response_data = {
+                "response": response_text,
+                "text": response_text,
+                "message": response_text
+            }
         
-        logger.info(f"📤 Response data: {response_data}")
-        
-        response = jsonify(response_data)
-        response.headers['Access-Control-Allow-Origin'] = '*'
-        response.headers['Content-Type'] = 'application/json'
-        
-        logger.info("✅ Response sent successfully")
-        logger.info("="*80)
-        
-        return response, 200
-        
+        return jsonify(response_data), 200
+    
     except Exception as e:
-        logger.error(f"❌ ERROR: {str(e)}", exc_info=True)
-        logger.info("="*80)
+        logger.error(f"Error: {str(e)}", exc_info=True)
         
-        return jsonify({
-            "response": f"Error: {str(e)}",
-            "text": "Error occurred",
-            "message": "Error occurred"
-        }), 200
+        # Return error in JSON-RPC format if applicable
+        if 'jsonrpc' in data and 'id' in data:
+            return jsonify({
+                "jsonrpc": "2.0",
+                "id": data['id'],
+                "error": {
+                    "code": -32603,
+                    "message": "Internal error",
+                    "data": str(e)
+                }
+            }), 200
+        else:
+            return jsonify({"response": "Error occurred"}), 200
 
 @app.route('/dictionary')
 def get_dictionary():

@@ -387,8 +387,7 @@ def a2a_agent():
             else:
                 reply_text = (
                     f"❌ Couldn't translate *{raw_text}* right now.\n"
-                    f"{result.get('message','Try a common word or add quotes, e.g., translate \"good morning\"')}"
-                )
+                    f"{result.get('message','Try a common word or add quotes, e.g., translate \"good morning\"')}")
 
         response_message = {
             "kind": "message",

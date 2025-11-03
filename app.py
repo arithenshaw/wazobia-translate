@@ -316,16 +316,16 @@ def a2a_agent():
             logger.info("🔔 Sending webhook...")
             
             try:
-                webhook_payload = {
-                    "jsonrpc": "2.0",
-                    "id": request_id,
-                    "result": task_result
-                }
+                # IMPORTANT: For webhooks, send TaskResult directly (not wrapped in JSON-RPC!)
+                # Based on FastAPI guide webhook implementation
+                webhook_payload = task_result  # Send task result directly!
                 
                 webhook_headers = {
                     'Content-Type': 'application/json',
                     'Authorization': f'Bearer {webhook_token}'
                 }
+                
+                logger.info(f"Webhook payload keys: {list(webhook_payload.keys())}")
                 
                 webhook_resp = requests.post(
                     webhook_url,

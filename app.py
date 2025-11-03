@@ -316,30 +316,50 @@ def a2a_agent():
             logger.info("🔔 Sending webhook...")
             
             try:
-                # IMPORTANT: For webhooks, send TaskResult directly (not wrapped in JSON-RPC!)
-                # Based on FastAPI guide webhook implementation
-                webhook_payload = task_result  # Send task result directly!
+                # Try different webhook formats
+                formats = [
+                    # Format 1: Just the status/message
+                    {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "result": task_status  # Just the status object
+                    },
+                    # Format 2: Just the response message
+                    {
+                        "jsonrpc": "2.0", 
+                        "id": request_id,
+                        "result": response_message  # Just the message
+                    },
+                    # Format 3: Full task result (what we tried before)
+                    {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "result": task_result
+                    }
+                ]
                 
                 webhook_headers = {
                     'Content-Type': 'application/json',
                     'Authorization': f'Bearer {webhook_token}'
                 }
                 
-                logger.info(f"Webhook payload keys: {list(webhook_payload.keys())}")
-                
-                webhook_resp = requests.post(
-                    webhook_url,
-                    json=webhook_payload,
-                    headers=webhook_headers,
-                    timeout=10
-                )
-                
-                logger.info(f"✅ Webhook: {webhook_resp.status_code}")
-                
-                if webhook_resp.status_code == 200:
-                    logger.info("🎉 WEBHOOK SUCCESS!")
-                else:
-                    logger.error(f"Webhook error: {webhook_resp.text[:300]}")
+                for idx, payload in enumerate(formats, 1):
+                    logger.info(f"Trying webhook format {idx}...")
+                    
+                    webhook_resp = requests.post(
+                        webhook_url,
+                        json=payload,
+                        headers=webhook_headers,
+                        timeout=10
+                    )
+                    
+                    logger.info(f"Format {idx} status: {webhook_resp.status_code}")
+                    
+                    if webhook_resp.status_code == 200:
+                        logger.info(f"🎉 WEBHOOK FORMAT {idx} SUCCESS!")
+                        break
+                    else:
+                        logger.warning(f"Format {idx} error: {webhook_resp.text[:200]}")
             
             except Exception as e:
                 logger.error(f"Webhook exception: {str(e)}")

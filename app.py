@@ -302,12 +302,16 @@ def translate():
 @app.route('/a2a/agent/wazobiaAgent', methods=['POST'])
 def a2a_agent():
     """
-    Complete debug version with webhook format testing
+    FINAL FIX - Webhook with correct JSON-RPC 2.0 format
     """
     try:
         data = request.get_json()
         logger.info("="*80)
         logger.info("📨 NEW REQUEST")
+        
+        # Extract request ID (CRITICAL for webhook!)
+        request_id = data.get('id')
+        logger.info(f"🆔 Request ID: {request_id}")
         
         # Extract webhook config
         webhook_url = None
@@ -319,9 +323,9 @@ def a2a_agent():
                 push_config = config['pushNotificationConfig']
                 webhook_url = push_config.get('url')
                 webhook_token = push_config.get('token')
-                logger.info(f"🔔 Webhook URL: {webhook_url}")
+                logger.info(f"🔔 Webhook URL found")
         
-        # Extract user message (simplified - just take first text part)
+        # Extract user message - take first clean word(s)
         user_message = ""
         
         if 'params' in data and 'message' in data['params']:
@@ -333,18 +337,15 @@ def a2a_agent():
                 if isinstance(first_part, dict) and first_part.get('kind') == 'text':
                     raw_text = first_part.get('text', '').strip()
                     
-                    # Simple extraction: just take first 2-3 words
+                    # Extract just the first 1-3 words
                     words = raw_text.split()[:3]
-                    user_message = ' '.join(words)
-                    
-                    # Remove common commands
-                    user_message = user_message.replace('translate', '').replace('please', '').strip()
+                    user_message = ' '.join(words).replace('translate', '').replace('please', '').strip()
         
         logger.info(f"✨ Message: '{user_message}'")
         
         # Process translation
         if not user_message or len(user_message) < 2:
-            response_text = "Try: hello"
+            response_text = "Hello! Try: hello, water, good morning"
         else:
             result = translate_text(user_message)
             
@@ -358,9 +359,9 @@ def a2a_agent():
                 
                 response_text = "\n".join(lines)
             else:
-                response_text = f"Not found: {user_message}"
+                response_text = f"'{user_message}' not found\n\nTry: hello, water, good morning"
         
-        logger.info(f"📤 Response: {response_text}")
+        logger.info(f"📤 Response: {response_text[:100]}")
         
         # Create response message
         response_message = {
@@ -374,83 +375,52 @@ def a2a_agent():
             ]
         }
         
-        # TEST ALL WEBHOOK FORMATS
-        if webhook_url and webhook_token:
-            logger.info("="*60)
-            logger.info("🔔 TESTING WEBHOOK FORMATS")
-            logger.info("="*60)
+        # SEND WEBHOOK with CORRECT JSON-RPC format
+        if webhook_url and webhook_token and request_id:
+            logger.info("🔔 Sending webhook with JSON-RPC format...")
             
-            headers = {
-                'Content-Type': 'application/json',
-                'Authorization': f'Bearer {webhook_token}'
-            }
-            
-            formats_to_test = [
-                # Format 1: Just message
-                ("Format 1 (message)", {"message": response_message}),
+            try:
+                # CORRECT FORMAT: Full JSON-RPC 2.0 response
+                webhook_payload = {
+                    "jsonrpc": "2.0",
+                    "id": request_id,  # CRITICAL: Include the original request ID!
+                    "result": {
+                        "message": response_message
+                    }
+                }
                 
-                # Format 2: Just text
-                ("Format 2 (text)", {"text": response_text}),
+                webhook_headers = {
+                    'Content-Type': 'application/json',
+                    'Authorization': f'Bearer {webhook_token}'
+                }
                 
-                # Format 3: Parts array
-                ("Format 3 (parts)", {
-                    "parts": [{"kind": "text", "text": response_text}]
-                }),
+                logger.info(f"Webhook payload: {webhook_payload}")
                 
-                # Format 4: Content field
-                ("Format 4 (content)", {"content": response_text}),
+                webhook_resp = requests.post(
+                    webhook_url,
+                    json=webhook_payload,
+                    headers=webhook_headers,
+                    timeout=10
+                )
                 
-                # Format 5: Response field
-                ("Format 5 (response)", {"response": response_text}),
+                logger.info(f"✅ Webhook status: {webhook_resp.status_code}")
                 
-                # Format 6: Result wrapper with message
-                ("Format 6 (result.message)", {
-                    "result": {"message": response_message}
-                }),
-            ]
-            
-            success = False
-            
-            for format_name, payload in formats_to_test:
-                if success:
-                    break
-                    
-                try:
-                    logger.info(f"\n📤 Testing {format_name}")
-                    logger.info(f"Payload: {str(payload)[:200]}")
-                    
-                    resp = requests.post(
-                        webhook_url,
-                        json=payload,
-                        headers=headers,
-                        timeout=10
-                    )
-                    
-                    logger.info(f"Status: {resp.status_code}")
-                    
-                    if resp.status_code == 200:
-                        logger.info(f"✅ {format_name} SUCCESS!")
-                        logger.info(f"Response: {resp.text[:300]}")
-                        success = True
-                        break
-                    else:
-                        logger.warning(f"❌ {format_name} failed")
-                        logger.warning(f"Response: {resp.text[:300]}")
-                        
-                except Exception as e:
-                    logger.error(f"❌ {format_name} error: {str(e)}")
-            
-            if not success:
-                logger.error("❌ ALL WEBHOOK FORMATS FAILED!")
-                logger.error("Telex might be expecting a different format")
-            
-            logger.info("="*60)
+                if webhook_resp.status_code == 200:
+                    logger.info("🎉 WEBHOOK SUCCESS!")
+                    logger.info(f"Response: {webhook_resp.text[:200]}")
+                else:
+                    logger.error(f"❌ Webhook failed: {webhook_resp.text[:500]}")
+                
+            except Exception as webhook_error:
+                logger.error(f"❌ Webhook error: {str(webhook_error)}", exc_info=True)
+        else:
+            logger.warning("⚠️ Missing webhook config or request ID")
         
-        # Return JSON-RPC response
-        if 'jsonrpc' in data and 'id' in data:
+        # Also return JSON-RPC response (belt and suspenders)
+        if 'jsonrpc' in data and request_id:
             response_data = {
                 "jsonrpc": "2.0",
-                "id": data['id'],
+                "id": request_id,
                 "result": {
                     "message": response_message
                 }
@@ -470,18 +440,20 @@ def a2a_agent():
         error_message = {
             "kind": "message",
             "role": "assistant",
-            "parts": [{"kind": "text", "text": "Error"}]
+            "parts": [{"kind": "text", "text": "Error. Try: hello"}]
         }
         
-        if 'jsonrpc' in data and 'id' in data:
+        request_id = data.get('id') if 'data' in locals() else None
+        
+        if request_id:
             return jsonify({
                 "jsonrpc": "2.0",
-                "id": data['id'],
+                "id": request_id,
                 "result": {"message": error_message}
             }), 200
         else:
             return jsonify({"response": "Error"}), 200
-
+        
 @app.route('/dictionary')
 def get_dictionary():
     """Return available words in the dictionary."""
